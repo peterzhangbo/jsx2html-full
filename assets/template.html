@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>html,body,#root{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}</style>
+__EXTRA_CSS__
+__TAILWIND_BLOCK__
+__CDN_SCRIPTS__
+</head>
+<body>
+<div id="root"></div>
+__REACT_LOADER__
+<script type="module">
+__INLINE_SCRIPTS__
+__USER_JSX__
+
+var __mount__ = document.getElementById('root');
+if (typeof App !== 'undefined') {
+  ReactDOM.createRoot(__mount__).render(React.createElement(App));
+} else {
+  __mount__.innerHTML = '<pre style="color:#c00;padding:20px">jsx2html: could not find default exported component.\nMake sure your JSX has: export default function App() { ... }</pre>';
+}
+</script>
+</body>
+</html>
