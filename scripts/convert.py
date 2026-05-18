@@ -320,22 +320,6 @@ def build_react_loader(vendor_dir: Path, mode: str) -> tuple:
 # Main
 # ─────────────────────────────────────────────
 
-def convert_one(input_path: Path, output_path: Path, mode: str, title: str = "React Artifact") -> dict:
-    """Convert a single JSX/HTML file. Returns the result dict."""
-    # Patch args-like object so existing code paths work unchanged
-    class _Args:
-        pass
-    args = _Args()
-    args.input = str(input_path)
-    args.output = str(output_path)
-    args.mode = mode
-    args.title = title
-    _run(args)
-    # _run calls sys.exit on success after printing JSON; we need the dict
-    # so we re-stat the file instead
-    out = output_path
-    return {"output": str(out), "size_kb": out.stat().st_size // 1024}
-
 
 def batch_main(base_dir: Path, dest_dir: Path, mode: str):
     """Convert all HTML files under base_dir, zip if >1 output."""
@@ -350,11 +334,11 @@ def batch_main(base_dir: Path, dest_dir: Path, mode: str):
     results = []
     all_inlined = []
     all_degraded = []
+    all_css_degraded = []
 
+    import subprocess
     for f in html_files:
         out = dest_dir / f.name
-        # Re-invoke convert logic by manipulating sys.argv and capturing output
-        import subprocess
         proc = subprocess.run(
             [sys.executable, __file__, str(f), "-o", str(out), "--mode", mode],
             capture_output=True, text=True
@@ -365,6 +349,7 @@ def batch_main(base_dir: Path, dest_dir: Path, mode: str):
         results.append(r)
         all_inlined.extend(r.get("inlined_deps", []))
         all_degraded.extend(r.get("degraded_deps", []))
+        all_css_degraded.extend(r.get("degraded_css", []))
 
     zip_path = None
     if len(results) > 1:
@@ -375,14 +360,16 @@ def batch_main(base_dir: Path, dest_dir: Path, mode: str):
                 p = Path(r["output"])
                 zf.write(p, p.name)
 
+    fully_offline = len(all_degraded) == 0 and len(all_css_degraded) == 0
     summary = {
         "outputs": results,
         "zip": str(zip_path) if zip_path else None,
         "mode": mode,
         "inlined_deps": sorted(set(all_inlined)),
         "degraded_deps": sorted(set(all_degraded)),
-        "fully_offline": len(all_degraded) == 0,
-        "file_protocol_compatible": len(all_degraded) == 0,
+        "degraded_css": sorted(set(all_css_degraded)),
+        "fully_offline": fully_offline,
+        "file_protocol_compatible": fully_offline,
     }
     print(json.dumps(summary, indent=2))
 
@@ -486,12 +473,14 @@ def _run(args):
         if m_title:
             args.title = m_title.group(1)
         if not jsx_parts:
-            # Pure HTML file: output as-is, just strip local stylesheets since we inline them
+            # Pure HTML passthrough: strip everything re-processed into extra_css, then append once.
             html_standalone = re.sub(
-                r'<link\s+[^>]*rel=["\']stylesheet["\'][^>]*href=["\'](?!http|//)[^"\']+["\'][^>]*>',
-                '',
-                html_content,
-                flags=re.IGNORECASE
+                r'<link\s+[^>]*rel=["\'](?:stylesheet|preconnect)["\'][^>]*>',
+                '', html_content, flags=re.IGNORECASE,
+            )
+            html_standalone = re.sub(
+                r'<style[^>]*>.*?</style>',
+                '', html_standalone, flags=re.IGNORECASE | re.DOTALL,
             )
             if extra_css:
                 html_standalone = html_standalone.replace('</head>', f'{extra_css}\n</head>')
