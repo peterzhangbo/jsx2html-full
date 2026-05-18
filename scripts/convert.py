@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import re
+import ssl
 import sys
 import urllib.request
 import zipfile
@@ -230,9 +231,46 @@ def escape_for_script(text: str) -> str:
     return text.replace("</script", "<\\/script")
 
 
+_CSS_IMPORT_RE = re.compile(
+    r"""@import\s+(?:url\(['"]?(https?://[^'"\)]+)['"]?\)|'(https?://[^']+)'|"(https?://[^"]+)")\s*(?:[^;]*)?\s*;?""",
+    re.IGNORECASE,
+)
+
+
+def inline_css_imports(css: str, mode: str, css_degraded: list) -> str:
+    """Replace @import <external-url> in CSS with fetched content (full mode) or track as degraded."""
+    def replacer(m):
+        url = m.group(1) or m.group(2) or m.group(3)
+        if mode == "full":
+            try:
+                fetched = fetch_bytes(url).decode("utf-8", errors="replace")
+                # Recursively resolve nested @imports (e.g. Google Fonts chain)
+                return inline_css_imports(fetched, mode, css_degraded)
+            except Exception:
+                css_degraded.append(url)
+                return m.group(0)
+        else:
+            css_degraded.append(url)
+            return m.group(0)
+
+    return _CSS_IMPORT_RE.sub(replacer, css)
+
+
 def fetch_bytes(url: str) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "jsx2html/2.0"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read()
+    except urllib.error.URLError as exc:
+        if "CERTIFICATE_VERIFY_FAILED" not in str(exc):
+            raise
+    # macOS Python often lacks root certs; retry with certifi or unverified context
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ctx = ssl._create_unverified_context()
+    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
         return resp.read()
 
 
@@ -370,14 +408,40 @@ def _run(args):
     input_path = Path(args.input)
     extra_css = ""
     
+    css_degraded: list = []
+
     if input_path.suffix.lower() == '.html':
         html_content = input_path.read_text(encoding="utf-8")
-        
-        # 1. Extract remote links (preconnect, fonts)
-        for m in re.finditer(r'<link\s+[^>]*rel=["\'](?:stylesheet|preconnect)["\'][^>]*>', html_content, re.IGNORECASE):
-            if re.search(r'href=["\'](http[^"\']+|//[^"\']+)["\']', m.group(0), re.IGNORECASE):
-                extra_css = m.group(0) + "\n" + extra_css
-                
+
+        # 1. Remote <link rel="stylesheet"> — inline in full mode, track as degraded in fast mode.
+        #    <link rel="preconnect"> are harmless hints: keep as-is.
+        for m in re.finditer(r'<link\s+[^>]*>', html_content, re.IGNORECASE):
+            tag = m.group(0)
+            rel_m = re.search(r'rel=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+            if not rel_m:
+                continue
+            rel = rel_m.group(1).lower()
+            href_m = re.search(r'href=["\']((https?:|//)[^"\']+)["\']', tag, re.IGNORECASE)
+            if not href_m:
+                continue
+            href = href_m.group(1)
+            if href.startswith("//"):
+                href = "https:" + href
+            if "stylesheet" in rel:
+                if args.mode == "full":
+                    try:
+                        css = fetch_bytes(href).decode("utf-8", errors="replace")
+                        css = inline_css_imports(css, args.mode, css_degraded)
+                        extra_css += f"\n<style>\n{css}\n</style>\n"
+                    except Exception:
+                        extra_css += tag + "\n"
+                        css_degraded.append(href)
+                else:
+                    extra_css += tag + "\n"
+                    css_degraded.append(href)
+            elif "preconnect" in rel:
+                extra_css = tag + "\n" + extra_css
+
         # 2. Extract local CSS files
         for m in re.finditer(r'<link\s+[^>]*rel=["\']stylesheet["\'][^>]*href=["\']([^"\']+)["\'][^>]*>', html_content, re.IGNORECASE):
             href = m.group(1)
@@ -385,10 +449,11 @@ def _run(args):
                 css_file = input_path.parent / href
                 if css_file.exists():
                     extra_css += f"\n<!-- Inlined from {href} -->\n<style>\n{css_file.read_text(encoding='utf-8')}\n</style>\n"
-                    
-        # 3. Extract embedded <style> blocks
+
+        # 3. Extract embedded <style> blocks — inline any @import <external-url> inside them
         for m in re.finditer(r'<style[^>]*>(.*?)</style>', html_content, re.IGNORECASE | re.DOTALL):
-            extra_css += f"\n<style>\n{m.group(1)}\n</style>\n"
+            css = inline_css_imports(m.group(1), args.mode, css_degraded)
+            extra_css += f"\n<style>\n{css}\n</style>\n"
             
         # 4. Extract local jsx scripts
         jsx_parts = []
@@ -434,6 +499,7 @@ def _run(args):
             out_path = Path(args.output)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(html_standalone, encoding="utf-8")
+            _fo = len(css_degraded) == 0
             print(json.dumps({
                 "output": str(out_path),
                 "size_kb": out_path.stat().st_size // 1024,
@@ -441,8 +507,9 @@ def _run(args):
                 "tailwind": False,
                 "inlined_deps": [],
                 "degraded_deps": [],
-                "fully_offline": True,
-                "file_protocol_compatible": True
+                "degraded_css": css_degraded,
+                "fully_offline": _fo,
+                "file_protocol_compatible": _fo,
             }, indent=2))
             sys.exit(0)
 
@@ -454,6 +521,7 @@ def _run(args):
         )
     else:
         jsx = input_path.read_text(encoding="utf-8")
+        css_degraded = []
 
     # Guard: no relative imports
     relative = [
@@ -561,7 +629,7 @@ def _run(args):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html, encoding="utf-8")
     size_kb = out_path.stat().st_size // 1024
-    fully_offline = len(degraded) == 0
+    fully_offline = len(degraded) == 0 and len(css_degraded) == 0
 
     result = {
         "output": str(out_path),
@@ -570,6 +638,7 @@ def _run(args):
         "tailwind": use_tailwind,
         "inlined_deps": inlined,
         "degraded_deps": degraded,
+        "degraded_css": css_degraded,
         "fully_offline": fully_offline,
         "file_protocol_compatible": fully_offline,
     }
