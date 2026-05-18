@@ -10,46 +10,64 @@ Output is **100% offline** and **`file://` compatible** — every dependency is 
 
 > **⛔ STOP: 严禁读取 convert.py 或任何其他源文件。本文件包含执行所有操作的完整指令。**
 
-## Commands
+## Output path rules
 
-**Single file** (JSX or HTML entrypoint):
-```bash
-python3 .claude/skills/jsx2html-full/scripts/convert.py /path/to/input.html -o ./dist/input.html --mode full
-```
-- `-o` basename must match the input basename.
+Derive `OUTDIR` and output stem before running the script:
 
-**Project directory** (multiple HTML files, auto-zips if >1 output):
-```bash
-python3 .claude/skills/jsx2html-full/scripts/convert.py /path/to/project -o "$(pwd)/dist" --mode full --batch
-```
+| Input type | `OUTDIR` | Output stem |
+|---|---|---|
+| `file_path` (any) | `<input_parent>/dist/` | `<input_stem>` |
+| `tar_gz_path` | `<input_parent>/dist/` | `<archive_stem>` |
+| `url` | `<cwd>/dist/` | filename from URL, strip archive extension |
+| `jsx_code` (no file) | `<cwd>/dist/` | top-level component name from code |
 
-Output always goes to `./dist/`. Report the full absolute path(s) to the user.
+Single file → `-o "$OUTDIR/<stem>.html"`.  
+Archive / batch → `-o "$OUTDIR" --batch`; script auto-zips to `<stem>-design.zip` when >1 output.
+
+Always report the full absolute path(s) to the user.
 
 ## Input handling
 
 > **Rule**: any file already on disk → pass its path directly to the script. Never read content to pass inline.
 > The script uses the file extension (`.html` vs anything else) to choose its parsing mode — the extension must be correct.
 
-**File path provided by user**: pass directly. If the extension is wrong (e.g. `.txt` for HTML content), copy to a temp path with the correct extension first.
-
-**URL input**: download to a temp file with the correct extension, then pass the path:
+**`file_path` (HTML / JSX)**: pass directly.
 ```bash
-CT=$(curl -sL "$URL" -o /tmp/artifact.html -w "%{content_type}")
-# branch by content-type / file magic:
-# - text/html or "HTML document"  → already saved as /tmp/artifact.html, pass as single file
-# - application/gzip or "gzip"   → mv /tmp/artifact.html /tmp/artifact.tar.gz, extract (see tar.gz below)
-# - text/plain or "ASCII/UTF-8"  → mv /tmp/artifact.html /tmp/artifact.jsx, pass as single file
+OUTDIR="$(dirname /foo/index.html)/dist"
+python3 .claude/skills/jsx2html-full/scripts/convert.py /foo/index.html \
+  -o "$OUTDIR/index.html" --mode full
 ```
 
-**tar.gz**: extract then run `--batch`:
+**`file_path` or `tar_gz_path` (.zip / .tar.gz)**:
 ```bash
-mkdir -p /tmp/proj && tar -xzf /tmp/artifact.tar.gz -C /tmp/proj
-BASE=$(find /tmp/proj -name "*.html" -not -path "*/dist/*" | head -1 | xargs -I{} dirname {} 2>/dev/null)
-[ -z "$BASE" ] && BASE=$(ls -d /tmp/proj/*/ | head -1)
-python3 .claude/skills/jsx2html-full/scripts/convert.py "$BASE" -o "$(pwd)/dist" --mode full --batch
+OUTDIR="$(dirname /foo/pkg.tar.gz)/dist"
+# zip: unzip /foo/pkg.zip -d /tmp/pkg_src
+# tar.gz:
+mkdir -p /tmp/pkg_src && tar -xzf /foo/pkg.tar.gz -C /tmp/pkg_src
+BASE=$(find /tmp/pkg_src -name "*.html" -not -path "*/dist/*" | head -1 | xargs -I{} dirname {} 2>/dev/null)
+[ -z "$BASE" ] && BASE=$(ls -d /tmp/pkg_src/*/ | head -1)
+python3 .claude/skills/jsx2html-full/scripts/convert.py "$BASE" \
+  -o "$OUTDIR" --mode full --batch
 ```
 
-**ZIP**: unzip to a working dir, then treat as project directory.
+**`url`**: detect type, download with the right extension, then use `<cwd>/dist/` as output:
+```bash
+STEM="pkg"   # filename from URL, strip archive extension
+OUTDIR="$(pwd)/dist"
+CT=$(curl -sL "$URL" -o /tmp/${STEM}.html -w "%{content_type}")
+# - text/html or "HTML document"      → /tmp/${STEM}.html, single file → -o "$OUTDIR/${STEM}.html"
+# - application/gzip or "gzip"        → mv to /tmp/${STEM}.tar.gz, extract, --batch → -o "$OUTDIR"
+# - application/zip or "Zip archive"  → mv to /tmp/${STEM}.zip, unzip, --batch → -o "$OUTDIR"
+# - text/plain or "ASCII / UTF-8"     → mv to /tmp/${STEM}.jsx, single file → -o "$OUTDIR/${STEM}.html"
+```
+
+**`jsx_code` (no file on disk)**: detect component name, save with Write tool, then pass path:
+```bash
+# e.g. component is "MyApp" → save to /tmp/MyApp.jsx (or .html if full HTML doc)
+OUTDIR="$(pwd)/dist"
+python3 .claude/skills/jsx2html-full/scripts/convert.py /tmp/MyApp.jsx \
+  -o "$OUTDIR/MyApp.html" --mode full
+```
 
 **No HTML entrypoint** (JSX-only project): pick the entry file by priority:
 1. Filename contains `index`, `main`, or `app`
@@ -74,6 +92,6 @@ Tell the user: output path(s), size, offline status, zip path if created.
 
 ## Notes
 
-- **Project Artifact / pasted code**: save to `/tmp/artifact.html` or `/tmp/artifact.jsx` (correct extension) with the Write tool first; never display it in the reply. Then pass the path — never read it back.
+- **Project Artifact / pasted code**: detect component name → save to `/tmp/<ComponentName>.jsx` (or `.html` if full HTML doc) with the Write tool; never display it in the reply. Then pass the path — never read it back.
 - **Failure — relative imports**: merge all JSX files into one before converting.
 - **Failure — missing dep**: pre-download UMD build to `vendor/deps/<pkg>.js`.
