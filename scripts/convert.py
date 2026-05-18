@@ -486,22 +486,12 @@ def _run(args):
         if m_title:
             args.title = m_title.group(1)
         if not jsx_parts:
-            # Pure HTML passthrough: strip everything that was re-processed into extra_css,
-            # then append extra_css once. Three categories to remove:
-            #   1. All <link rel="stylesheet"> (local ones inlined, remote ones handled)
-            #   2. All <link rel="preconnect"> (re-emitted via extra_css)
-            #   3. All <style> blocks (re-emitted with @import resolved)
+            # Pure HTML file: output as-is, just strip local stylesheets since we inline them
             html_standalone = re.sub(
-                r'<link\s+[^>]*rel=["\'](?:stylesheet|preconnect)["\'][^>]*>',
+                r'<link\s+[^>]*rel=["\']stylesheet["\'][^>]*href=["\'](?!http|//)[^"\']+["\'][^>]*>',
                 '',
                 html_content,
-                flags=re.IGNORECASE,
-            )
-            html_standalone = re.sub(
-                r'<style[^>]*>.*?</style>',
-                '',
-                html_standalone,
-                flags=re.IGNORECASE | re.DOTALL,
+                flags=re.IGNORECASE
             )
             if extra_css:
                 html_standalone = html_standalone.replace('</head>', f'{extra_css}\n</head>')
