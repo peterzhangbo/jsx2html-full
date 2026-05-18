@@ -27,19 +27,23 @@ Output always goes to `./dist/`. Report the full absolute path(s) to the user.
 
 ## Input handling
 
-**URL input**: always download first, never pipe:
+> **Rule**: any file already on disk → pass its path directly to the script. Never read content to pass inline.
+> The script uses the file extension (`.html` vs anything else) to choose its parsing mode — the extension must be correct.
+
+**File path provided by user**: pass directly. If the extension is wrong (e.g. `.txt` for HTML content), copy to a temp path with the correct extension first.
+
+**URL input**: download to a temp file with the correct extension, then pass the path:
 ```bash
-curl -s "$URL" -o /tmp/artifact.bin -w "%{content_type}\n%{http_code}"
-file /tmp/artifact.bin
+CT=$(curl -sL "$URL" -o /tmp/artifact.html -w "%{content_type}")
+# branch by content-type / file magic:
+# - text/html or "HTML document"  → already saved as /tmp/artifact.html, pass as single file
+# - application/gzip or "gzip"   → mv /tmp/artifact.html /tmp/artifact.tar.gz, extract (see tar.gz below)
+# - text/plain or "ASCII/UTF-8"  → mv /tmp/artifact.html /tmp/artifact.jsx, pass as single file
 ```
-Then branch by type:
-- `gzip compressed` → extract tar.gz, find project root, use `--batch`
-- `HTML document` → pass directly as single file
-- `ASCII / UTF-8 text` → save as `.jsx`, pass as single file
 
 **tar.gz**: extract then run `--batch`:
 ```bash
-mkdir -p /tmp/proj && tar -xzf /tmp/artifact.bin -C /tmp/proj
+mkdir -p /tmp/proj && tar -xzf /tmp/artifact.tar.gz -C /tmp/proj
 BASE=$(find /tmp/proj -name "*.html" -not -path "*/dist/*" | head -1 | xargs -I{} dirname {} 2>/dev/null)
 [ -z "$BASE" ] && BASE=$(ls -d /tmp/proj/*/ | head -1)
 python3 .claude/skills/jsx2html-full/scripts/convert.py "$BASE" -o "$(pwd)/dist" --mode full --batch
@@ -70,8 +74,6 @@ Tell the user: output path(s), size, offline status, zip path if created.
 
 ## Notes
 
-- **Project Artifact / pasted code**: use Write tool to save to disk first; never display it in the reply.
-  - If the code starts with `<!DOCTYPE` or `<html` → save as `.html`, pass as single file.
-  - Otherwise → save as `.jsx`, pass as single file.
+- **Project Artifact / pasted code**: save to `/tmp/artifact.html` or `/tmp/artifact.jsx` (correct extension) with the Write tool first; never display it in the reply. Then pass the path — never read it back.
 - **Failure — relative imports**: merge all JSX files into one before converting.
 - **Failure — missing dep**: pre-download UMD build to `vendor/deps/<pkg>.js`.
