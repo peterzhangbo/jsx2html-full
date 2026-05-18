@@ -70,6 +70,8 @@ Tell the user: output path(s), size, offline status, zip path if created.
 
 ## Notes
 
-- **Project Artifact**: use Write tool to save JSX to disk first; never display it in the reply.
+- **Project Artifact / pasted code**: use Write tool to save to disk first; never display it in the reply.
+  - If the code starts with `<!DOCTYPE` or `<html` → save as `.html`, pass as single file.
+  - Otherwise → save as `.jsx`, pass as single file.
 - **Failure — relative imports**: merge all JSX files into one before converting.
 - **Failure — missing dep**: pre-download UMD build to `vendor/deps/<pkg>.js`.
