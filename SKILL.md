@@ -8,16 +8,12 @@ description: Convert a React Artifact (JSX) into a self-contained offline HTML f
 Convert a React Artifact's JSX into a self-contained HTML file using a local Python script.
 Output is **100% offline** and **`file://` compatible** — every dependency is inlined, no server needed.
 
-> **⛔ STOP: 严禁读取 convert.py 或任何其他源文件。本文件包含执行所有操作的完整指令。**
-
-## Locate the script
-
-The skill may be mounted at any path. Always resolve it first:
-```bash
-CONVERT=$(find /mnt/skills ~/.claude/skills -name "convert.py" -path "*/jsx2html-full/*" 2>/dev/null | head -1)
-[ -z "$CONVERT" ] && echo "jsx2html: convert.py not found" && exit 1
-```
-Use `$CONVERT` in place of the hardcoded script path in every command below.
+> **⛔ STOP — 执行任何命令前，必须先运行下面这行定位脚本。严禁用硬编码路径。严禁读取 convert.py 或任何其他源文件。**
+> ```bash
+> CONVERT=$(find /mnt/skills ~/.claude/skills -name "convert.py" -path "*/jsx2html-full/*" 2>/dev/null | head -1)
+> [ -z "$CONVERT" ] && echo "jsx2html: convert.py not found" && exit 1
+> ```
+> 后续所有命令用 `$CONVERT` 代替脚本路径。
 
 ## Output path rules
 
