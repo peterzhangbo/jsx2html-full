@@ -10,6 +10,15 @@ Output is **100% offline** and **`file://` compatible** — every dependency is 
 
 > **⛔ STOP: 严禁读取 convert.py 或任何其他源文件。本文件包含执行所有操作的完整指令。**
 
+## Locate the script
+
+The skill may be mounted at any path. Always resolve it first:
+```bash
+CONVERT=$(find /mnt/skills ~/.claude/skills -name "convert.py" -path "*/jsx2html-full/*" 2>/dev/null | head -1)
+[ -z "$CONVERT" ] && echo "jsx2html: convert.py not found" && exit 1
+```
+Use `$CONVERT` in place of the hardcoded script path in every command below.
+
 ## Output path rules
 
 Derive `OUTDIR` and output stem before running the script:
@@ -34,7 +43,7 @@ Always report the full absolute path(s) to the user.
 **`file_path` (HTML / JSX)**: pass directly.
 ```bash
 OUTDIR="$(dirname /foo/index.html)/dist"
-python3 .claude/skills/jsx2html-full/scripts/convert.py /foo/index.html \
+python3 "$CONVERT" /foo/index.html \
   -o "$OUTDIR/index.html" --mode full
 ```
 
@@ -46,7 +55,7 @@ OUTDIR="$(dirname /foo/pkg.tar.gz)/dist"
 mkdir -p /tmp/pkg_src && tar -xzf /foo/pkg.tar.gz -C /tmp/pkg_src
 BASE=$(find /tmp/pkg_src -name "*.html" -not -path "*/dist/*" | head -1 | xargs -I{} dirname {} 2>/dev/null)
 [ -z "$BASE" ] && BASE=$(ls -d /tmp/pkg_src/*/ | head -1)
-python3 .claude/skills/jsx2html-full/scripts/convert.py "$BASE" \
+python3 "$CONVERT" "$BASE" \
   -o "$OUTDIR" --mode full --batch
 ```
 
@@ -65,7 +74,7 @@ CT=$(curl -sL "$URL" -o /tmp/${STEM}.html -w "%{content_type}")
 ```bash
 # e.g. component is "MyApp" → save to /tmp/MyApp.jsx (or .html if full HTML doc)
 OUTDIR="$(pwd)/dist"
-python3 .claude/skills/jsx2html-full/scripts/convert.py /tmp/MyApp.jsx \
+python3 "$CONVERT" /tmp/MyApp.jsx \
   -o "$OUTDIR/MyApp.html" --mode full
 ```
 
