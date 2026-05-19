@@ -95,3 +95,12 @@ Tell the user: output path(s), size, offline status, zip path if created.
 - **Project Artifact / pasted code**: detect component name → save to `/tmp/<ComponentName>.jsx` (or `.html` if full HTML doc) with the Write tool; never display it in the reply. Then pass the path — never read it back.
 - **Failure — relative imports**: merge all JSX files into one before converting.
 - **Failure — missing dep**: pre-download UMD build to `vendor/deps/<pkg>.js`.
+
+## ⛔ Hard constraints — never bypass
+
+**Never truncate source code.** The Write tool must receive the complete, unmodified source. Do NOT:
+- Write a shortened version "to avoid length limits"
+- Replace sections with `// ... existing code ...`, `/* omitted */`, or any placeholder
+- Split the write across multiple partial saves that each overwrite the file
+
+If the source is too large to fit in a single Write call, use the Bash tool to write it via a heredoc instead. There is no legitimate reason to convert a truncated or placeholder-filled file — doing so silently produces broken output. If you cannot write the full source, stop and tell the user why.
